@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_executable(CompositorWindowsPoC WIN32
     src/main.cpp
     ../Compositor/Rendering/LevelsPixels.c
+    ../Compositor/Rendering/NoisePixels.c
 )
 
 target_include_directories(CompositorWindowsPoC PRIVATE

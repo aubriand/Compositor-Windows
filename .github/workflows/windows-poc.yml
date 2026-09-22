@@ -1,0 +1,24 @@
+name: Windows PoC
+
+on:
+  push:
+    branches:
+      - poc/windows-port-feasibility
+  pull_request:
+    paths:
+      - 'WindowsPoC/**'
+      - 'Compositor/Rendering/LevelsPixels.c'
+      - 'Compositor/Rendering/LevelsPixels.h'
+      - '.github/workflows/windows-poc.yml'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -S WindowsPoC -B WindowsPoC/build -A x64
+
+      - name: Build
+        run: cmake --build WindowsPoC/build --config Release

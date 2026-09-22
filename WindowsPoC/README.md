@@ -1,35 +1,21 @@
 # Compositor Windows portability PoC
 
-This prototype answers one narrow question: can Compositor reuse part of its existing rendering core in a native Windows application without rewriting everything first?
+This spike validates a native Windows path without rewriting Compositor's existing portable rendering code first.
 
 ## What it proves
 
-- Native Windows executable built with CMake/MSVC.
-- Image decoding through Windows Imaging Component (WIC), avoiding Apple ImageIO/CoreImage.
-- Rendering through Direct2D, avoiding AppKit/CoreGraphics for the presentation layer.
-- Direct reuse of `Compositor/Rendering/LevelsPixels.c` from the existing Compositor codebase.
-- Drag-and-drop of an image file into the PoC window.
+- A native Windows executable can be built with MSVC/CMake.
+- Images can be decoded with Windows Imaging Component (WIC).
+- Existing Compositor C rendering code can be compiled and invoked unchanged (`LevelsPixels.c`).
+- A platform-neutral `RasterImage` can own premultiplied RGBA pixels without depending on AppKit, CoreGraphics, WIC or Direct2D.
+- A tiny document model can composite multiple raster layers with position, visibility and opacity on the CPU.
+- The final composited raster can be uploaded to Direct2D for display.
 
-The current levels lookup tables are identity tables on purpose: the displayed pixels should remain visually unchanged while still executing the original Compositor `levels_apply()` implementation.
+The current demo loads one dropped image and builds a two-layer document from it: a full-opacity base layer and an offset 45% opacity copy. The duplication is intentional so the compositing result is immediately visible without requiring additional assets.
 
-## What it does not prove yet
+## Build
 
-- Portability of the Swift document/session model.
-- PSD import on Windows.
-- Brushes, selections, transforms or text.
-- GPU effects currently implemented with Metal.
-- Color-management parity with macOS.
-- Production UI architecture.
-
-## Build on Windows
-
-Requirements:
-
-- Windows 10/11
-- Visual Studio 2022 with Desktop development with C++
-- CMake 3.24+
-
-From a Developer PowerShell:
+From a Visual Studio Developer PowerShell:
 
 ```powershell
 cmake -S WindowsPoC -B WindowsPoC/build -A x64
@@ -37,8 +23,32 @@ cmake --build WindowsPoC/build --config Release
 .\WindowsPoC\build\Release\CompositorWindowsPoC.exe
 ```
 
-Drop a PNG, JPEG, BMP or TIFF onto the window.
+## Architecture direction validated by the spike
 
-## Next validation milestone
+```text
+Portable core
+  RasterImage
+  RasterLayer
+  CPU compositing
+  Existing C pixel algorithms
+        |
+        +---- macOS adapters (future)
+        |       CoreGraphics / Metal / AppKit
+        |
+        +---- Windows adapters
+                WIC / Direct2D / Direct3D
+```
 
-If this PoC builds successfully, the next useful spike is to introduce a platform-neutral raster structure and port a small document containing two composited layers. That will tell us how much of Compositor's document/rendering architecture can be shared before deciding on the final Windows UI stack.
+The important boundary is that the portable core does not include Windows or Apple framework headers.
+
+## Still not validated
+
+- Porting Compositor's Swift document/session model.
+- PSD import through the portable raster type.
+- Selections, masks, transforms, text and brushes.
+- GPU rendering/effects replacing Metal on Windows.
+- Final Windows UI framework and application architecture.
+
+## Next spike
+
+Map a small subset of the real Compositor document/layer model onto `RasterImage` rather than using the temporary `RasterLayer` struct, then exercise one additional existing C operation on a selected layer.

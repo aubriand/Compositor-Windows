@@ -8,10 +8,11 @@
 #include <algorithm>
 #include <cmath>
 
-#include "RasterImage.h"
+#include "DocumentModel.h"
 
 extern "C" {
 #include "LevelsPixels.h"
+#include "NoisePixels.h"
 }
 
 template <class T>
@@ -111,6 +112,8 @@ bool loadImage(const wchar_t* path) {
         return false;
     }
 
+    // Existing Compositor operation #1: Levels. Identity tables deliberately
+    // exercise the original implementation without changing the base pixels.
     std::array<float, 256 * 3> tables{};
     for (int channel = 0; channel < 3; ++channel) {
         for (int i = 0; i < 256; ++i) {
@@ -119,22 +122,60 @@ bool loadImage(const wchar_t* path) {
     }
     levels_apply(source.pixels.data(), static_cast<size_t>(source.width) * source.height, tables.data());
 
-    RasterLayer background;
-    background.image = source;
-
-    RasterLayer overlay;
-    overlay.image = source;
-    overlay.x = static_cast<int>(source.width / 8);
-    overlay.y = static_cast<int>(source.height / 8);
-    overlay.opacity = 0.45f;
-
     const uint32_t canvasWidth = source.width + source.width / 4;
     const uint32_t canvasHeight = source.height + source.height / 4;
-    g.composited = compositeLayers(canvasWidth, canvasHeight, { background, overlay });
+
+    // Build a subset of the real CanvasDocument/ImageLayer model: bottom-to-top
+    // layers, a pass-through folder, parent visibility/opacity, and transforms.
+    PortableDocument document;
+    document.width = canvasWidth;
+    document.height = canvasHeight;
+    document.resolution = 72;
+
+    DocumentLayer background;
+    background.id = "background";
+    background.name = "Background";
+    background.image = source;
+    background.transform = {0, 0, static_cast<double>(source.width), static_cast<double>(source.height)};
+
+    DocumentLayer folder;
+    folder.id = "folder";
+    folder.name = "Folder 1";
+    folder.isGroup = true;
+    folder.opacity = 0.75;
+    folder.transform = {0, 0, static_cast<double>(canvasWidth), static_cast<double>(canvasHeight)};
+
+    DocumentLayer overlay;
+    overlay.id = "overlay";
+    overlay.name = "Noise overlay";
+    overlay.image = source;
+    overlay.parentID = folder.id;
+    overlay.opacity = 0.60;
+    overlay.transform = {
+        static_cast<double>(source.width / 8),
+        static_cast<double>(source.height / 8),
+        static_cast<double>(source.width),
+        static_cast<double>(source.height)
+    };
+
+    // Existing Compositor operation #2: Add Noise, applied to one selected layer
+    // before the document is flattened. This validates that pixel operations can
+    // target portable layer-owned rasters instead of CGImage.
+    noise_add(
+        overlay.image.pixels.data(), overlay.image.width, overlay.image.height,
+        static_cast<size_t>(overlay.image.width) * 4, 18.0f, 0, 1, 0xC0A5E17u
+    );
+
+    document.layers = {std::move(background), std::move(folder), std::move(overlay)};
+    g.composited = renderDocument(document);
+    if (g.composited.empty()) {
+        g.status = L"Portable document validation failed";
+        return false;
+    }
+
     g.width = g.composited.width;
     g.height = g.composited.height;
-
-    g.status = L"2-layer RasterImage document composited on CPU and rendered with Direct2D";
+    g.status = L"CanvasDocument subset + folder opacity + Levels/Noise C core rendered with Direct2D";
     rebuildBitmap();
     return true;
 }

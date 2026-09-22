@@ -8,6 +8,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include "RasterImage.h"
+
 extern "C" {
 #include "LevelsPixels.h"
 }
@@ -25,7 +27,7 @@ struct AppState {
     ID2D1HwndRenderTarget* renderTarget = nullptr;
     ID2D1Bitmap* bitmap = nullptr;
     IWICImagingFactory* wicFactory = nullptr;
-    std::vector<unsigned char> pixels;
+    RasterImage composited;
     UINT width = 0;
     UINT height = 0;
     std::wstring status = L"Drop a PNG/JPEG/BMP/TIFF file on this window";
@@ -47,75 +49,94 @@ bool ensureRenderTarget(HWND hwnd) {
 }
 
 void rebuildBitmap() {
-    if (!g.renderTarget || g.pixels.empty() || !g.width || !g.height) return;
+    if (!g.renderTarget || g.composited.empty() || !g.width || !g.height) return;
     safeRelease(g.bitmap);
     D2D1_BITMAP_PROPERTIES props = D2D1::BitmapProperties(
         D2D1::PixelFormat(DXGI_FORMAT_R8G8B8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)
     );
     g.renderTarget->CreateBitmap(
         D2D1::SizeU(g.width, g.height),
-        g.pixels.data(),
+        g.composited.pixels.data(),
         g.width * 4,
         &props,
         &g.bitmap
     );
 }
 
-bool loadImage(const wchar_t* path) {
-    safeRelease(g.bitmap);
-    g.pixels.clear();
-    g.width = g.height = 0;
-
+RasterImage loadRasterWithWIC(const wchar_t* path) {
+    RasterImage image;
     IWICBitmapDecoder* decoder = nullptr;
     IWICBitmapFrameDecode* frame = nullptr;
     IWICFormatConverter* converter = nullptr;
-    std::array<float, 256 * 3> tables{};
 
     HRESULT hr = g.wicFactory->CreateDecoderFromFilename(path, nullptr, GENERIC_READ,
         WICDecodeMetadataCacheOnDemand, &decoder);
-    if (FAILED(hr)) goto fail;
+    if (FAILED(hr)) goto cleanup;
 
     hr = decoder->GetFrame(0, &frame);
-    if (FAILED(hr)) goto fail;
+    if (FAILED(hr)) goto cleanup;
 
-    hr = frame->GetSize(&g.width, &g.height);
-    if (FAILED(hr) || !g.width || !g.height) goto fail;
+    UINT width = 0;
+    UINT height = 0;
+    hr = frame->GetSize(&width, &height);
+    if (FAILED(hr) || !width || !height) goto cleanup;
 
     hr = g.wicFactory->CreateFormatConverter(&converter);
-    if (FAILED(hr)) goto fail;
+    if (FAILED(hr)) goto cleanup;
 
     hr = converter->Initialize(frame, GUID_WICPixelFormat32bppPRGBA,
         WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom);
-    if (FAILED(hr)) goto fail;
+    if (FAILED(hr)) goto cleanup;
 
-    g.pixels.resize(static_cast<size_t>(g.width) * g.height * 4);
-    hr = converter->CopyPixels(nullptr, g.width * 4,
-        static_cast<UINT>(g.pixels.size()), g.pixels.data());
-    if (FAILED(hr)) goto fail;
+    image = RasterImage(width, height);
+    hr = converter->CopyPixels(nullptr, width * 4,
+        static_cast<UINT>(image.pixels.size()), image.pixels.data());
+    if (FAILED(hr)) image = RasterImage{};
 
-    // Reuse Compositor's existing portable C implementation as the proof-of-portability step.
-    // The identity tables deliberately leave the image unchanged while exercising levels_apply().
+cleanup:
+    safeRelease(converter);
+    safeRelease(frame);
+    safeRelease(decoder);
+    return image;
+}
+
+bool loadImage(const wchar_t* path) {
+    safeRelease(g.bitmap);
+    g.composited = RasterImage{};
+    g.width = g.height = 0;
+
+    RasterImage source = loadRasterWithWIC(path);
+    if (source.empty()) {
+        g.status = L"Unable to decode this image with Windows Imaging Component";
+        return false;
+    }
+
+    std::array<float, 256 * 3> tables{};
     for (int channel = 0; channel < 3; ++channel) {
         for (int i = 0; i < 256; ++i) {
             tables[channel * 256 + i] = static_cast<float>(i) / 255.0f;
         }
     }
-    levels_apply(g.pixels.data(), static_cast<size_t>(g.width) * g.height, tables.data());
+    levels_apply(source.pixels.data(), static_cast<size_t>(source.width) * source.height, tables.data());
 
-    g.status = L"Loaded with WIC, processed through Compositor LevelsPixels.c, rendered with Direct2D";
+    RasterLayer background;
+    background.image = source;
+
+    RasterLayer overlay;
+    overlay.image = source;
+    overlay.x = static_cast<int>(source.width / 8);
+    overlay.y = static_cast<int>(source.height / 8);
+    overlay.opacity = 0.45f;
+
+    const uint32_t canvasWidth = source.width + source.width / 4;
+    const uint32_t canvasHeight = source.height + source.height / 4;
+    g.composited = compositeLayers(canvasWidth, canvasHeight, { background, overlay });
+    g.width = g.composited.width;
+    g.height = g.composited.height;
+
+    g.status = L"2-layer RasterImage document composited on CPU and rendered with Direct2D";
     rebuildBitmap();
-
-    safeRelease(converter);
-    safeRelease(frame);
-    safeRelease(decoder);
     return true;
-
-fail:
-    g.status = L"Unable to decode this image with Windows Imaging Component";
-    safeRelease(converter);
-    safeRelease(frame);
-    safeRelease(decoder);
-    return false;
 }
 
 void paint(HWND hwnd) {

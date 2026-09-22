@@ -1,4 +1,5 @@
 #include <windows.h>
+#include <shellapi.h>
 #include <wincodec.h>
 #include <d2d1.h>
 #include <vector>
@@ -68,6 +69,7 @@ bool loadImage(const wchar_t* path) {
     IWICBitmapDecoder* decoder = nullptr;
     IWICBitmapFrameDecode* frame = nullptr;
     IWICFormatConverter* converter = nullptr;
+    std::array<float, 256 * 3> tables{};
 
     HRESULT hr = g.wicFactory->CreateDecoderFromFilename(path, nullptr, GENERIC_READ,
         WICDecodeMetadataCacheOnDemand, &decoder);
@@ -93,7 +95,6 @@ bool loadImage(const wchar_t* path) {
 
     // Reuse Compositor's existing portable C implementation as the proof-of-portability step.
     // The identity tables deliberately leave the image unchanged while exercising levels_apply().
-    std::array<float, 256 * 3> tables{};
     for (int channel = 0; channel < 3; ++channel) {
         for (int i = 0; i < 256; ++i) {
             tables[channel * 256 + i] = static_cast<float>(i) / 255.0f;

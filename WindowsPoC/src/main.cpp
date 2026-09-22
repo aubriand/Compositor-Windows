@@ -68,6 +68,8 @@ RasterImage loadRasterWithWIC(const wchar_t* path) {
     IWICBitmapDecoder* decoder = nullptr;
     IWICBitmapFrameDecode* frame = nullptr;
     IWICFormatConverter* converter = nullptr;
+    UINT width = 0;
+    UINT height = 0;
 
     HRESULT hr = g.wicFactory->CreateDecoderFromFilename(path, nullptr, GENERIC_READ,
         WICDecodeMetadataCacheOnDemand, &decoder);
@@ -76,8 +78,6 @@ RasterImage loadRasterWithWIC(const wchar_t* path) {
     hr = decoder->GetFrame(0, &frame);
     if (FAILED(hr)) goto cleanup;
 
-    UINT width = 0;
-    UINT height = 0;
     hr = frame->GetSize(&width, &height);
     if (FAILED(hr) || !width || !height) goto cleanup;
 
